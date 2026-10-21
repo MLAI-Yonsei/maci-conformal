@@ -165,7 +165,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         from . import conditional  # noqa: F401
         print("CCI baseline: available")
     except ImportError:
-        print('CCI baseline: unavailable (pip install "maci-conformal[cci]")')
+        print('CCI baseline: unavailable (pip install torch conditionalconformal)')
     return 0
 
 

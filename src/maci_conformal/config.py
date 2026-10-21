@@ -228,7 +228,7 @@ view_metadata_csv = ""
 limit_samples = 2000
 
 [experiment]
-# Any of "BCI", "CCI", "MACI". CCI needs: pip install "maci-conformal[cci]"
+# Any of "BCI", "CCI", "MACI". CCI needs: pip install torch conditionalconformal
 methods = ["BCI", "CCI", "MACI"]
 # Target miscoverage: the method aims for coverage >= 1 - alpha.
 alpha = 0.1

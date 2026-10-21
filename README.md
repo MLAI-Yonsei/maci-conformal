@@ -10,23 +10,25 @@ Ensuring factuality is essential for the safe use of Large Language Models (LLMs
 
 ## Installation
 
-Requires Python 3.9 or newer.
+Requires Python 3.9 or newer and git. The package is not on PyPI yet, so install it from GitHub:
 
 ```bash
-pip install maci-conformal
+pip install "git+https://github.com/MLAI-Yonsei/maci-conformal.git"
 ```
 
 To also run the CCI (conditional conformal) baseline, which needs PyTorch:
 
 ```bash
-pip install "maci-conformal[cci]"
+pip install "maci-conformal[cci] @ git+https://github.com/MLAI-Yonsei/maci-conformal.git"
 ```
 
-To install from the repository before a PyPI release, or to work on the code:
+These install the latest `main`. To pin a release, add the tag at the end of the URL, for example `...maci-conformal.git@v0.1.0`.
+
+To work on the code:
 
 ```bash
-pip install "git+https://github.com/MLAI-Yonsei/maci-conformal.git"
-# or, from a clone:
+git clone https://github.com/MLAI-Yonsei/maci-conformal.git
+cd maci-conformal
 pip install -e ".[cci,dev]"
 ```
 

@@ -1,6 +1,7 @@
 """Conditional Conformal Inference (CCI) baseline.
 
-Requires the optional ``cci`` extra: ``pip install "maci-conformal[cci]"``.
+Requires the optional ``cci`` extra, i.e. PyTorch and conditionalconformal:
+``pip install torch conditionalconformal``.
 """
 
 import numpy as np
@@ -15,7 +16,7 @@ try:
 except ImportError as e:  # pragma: no cover - exercised only without the extra
     raise ImportError(
         "The CCI baseline needs PyTorch and conditionalconformal. "
-        'Install them with: pip install "maci-conformal[cci]"'
+        'Install them with: pip install torch conditionalconformal'
     ) from e
 
 # ==============================================================================
