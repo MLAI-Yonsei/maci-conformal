@@ -15,7 +15,7 @@ checks new answers (the ``maci calibrate`` / ``maci check`` commands).
 The CCI baseline lives in :mod:`maci_conformal.conditional` and needs the ``cci`` extra.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 from .adaptive import MACIAdaptiveConformal, SubgroupOptimizedMACI
 from .basic import BasicConformal

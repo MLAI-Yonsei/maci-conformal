@@ -256,7 +256,7 @@ python -m build && twine check dist/*
 
 1. One-time setup: on PyPI, add a [trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for project `maci-conformal`, repository `MLAI-Yonsei/maci-conformal`, workflow `publish.yml`, environment `pypi`. GitHub creates the `pypi` environment on the first run. You can add required reviewers to it in the repository settings.
 2. Bump `__version__` in `src/maci_conformal/__init__.py`.
-3. Create a GitHub Release with tag `v<version>`, for example `v0.2.1`. The `Publish to PyPI` workflow builds the package, checks that the tag matches the version, and uploads it.
+3. Create a GitHub Release with tag `v<version>`, for example `v0.2.2`. The `Publish to PyPI` workflow builds the package, checks that the tag matches the version, and uploads it.
 
 ## CCI Attribution
 
