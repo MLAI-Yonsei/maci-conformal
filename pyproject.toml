@@ -44,9 +44,9 @@ dev = ["pytest>=7", "build>=1.0", "twine>=4"]
 maci = "maci_conformal.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/MLAI-Yonsei/MACI"
-Source = "https://github.com/MLAI-Yonsei/MACI"
-Issues = "https://github.com/MLAI-Yonsei/MACI/issues"
+Homepage = "https://github.com/MLAI-Yonsei/maci-conformal"
+Source = "https://github.com/MLAI-Yonsei/maci-conformal"
+Issues = "https://github.com/MLAI-Yonsei/maci-conformal/issues"
 
 [tool.setuptools.dynamic]
 version = { attr = "maci_conformal.__version__" }

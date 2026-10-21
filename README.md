@@ -1,5 +1,7 @@
 # MACI: Multi-LLM Adaptive Conformal Inference
 
+This repository packages the code of [MLAI-Yonsei/MACI](https://github.com/MLAI-Yonsei/MACI) as an installable library and command-line tool.
+
 MACI filters the claims in an LLM response so that, with a user-chosen probability `1 - alpha`, none of the claims it keeps is false. Each claim's factuality score is an ensemble of several LLM scorers, and the filter is calibrated separately for each group of prompts.
 
 ## Abstract
@@ -23,7 +25,7 @@ pip install "maci-conformal[cci]"
 To install from the repository before a PyPI release, or to work on the code:
 
 ```bash
-pip install "git+https://github.com/MLAI-Yonsei/MACI.git"
+pip install "git+https://github.com/MLAI-Yonsei/maci-conformal.git"
 # or, from a clone:
 pip install -e ".[cci,dev]"
 ```
@@ -158,7 +160,7 @@ python -m build && twine check dist/*
 
 ### Releasing to PyPI
 
-1. One-time setup: on PyPI, add a [trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for project `maci-conformal`, repository `MLAI-Yonsei/MACI`, workflow `publish.yml`, environment `pypi`. Create a `pypi` environment in the GitHub repository settings.
+1. One-time setup: on PyPI, add a [trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for project `maci-conformal`, repository `MLAI-Yonsei/maci-conformal`, workflow `publish.yml`, environment `pypi`. GitHub creates the `pypi` environment on the first run. You can add required reviewers to it in the repository settings.
 2. Bump `__version__` in `src/maci_conformal/__init__.py`.
 3. Create a GitHub Release with tag `v<version>`, for example `v0.1.0`. The `Publish to PyPI` workflow builds the package, checks that the tag matches the version, and uploads it.
 

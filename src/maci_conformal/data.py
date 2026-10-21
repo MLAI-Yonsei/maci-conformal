@@ -27,7 +27,7 @@ _MODEL_FILE_TOKENS = {
 # Data files are fetched from a fixed commit of the GitHub repository, so every
 # download is byte-identical to what the paper used. Update DATA_REF and the
 # hashes together if the data in the repository ever changes.
-DATA_REPO = "MLAI-Yonsei/MACI"
+DATA_REPO = "MLAI-Yonsei/maci-conformal"
 DATA_REF = "1f436c82750eb3afafcc9287ab6c21174e029aba"
 DATA_URL_TEMPLATE = "https://raw.githubusercontent.com/{repo}/{ref}/data/{path}"
 
