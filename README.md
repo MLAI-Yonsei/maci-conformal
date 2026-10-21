@@ -10,19 +10,23 @@ Ensuring factuality is essential for the safe use of Large Language Models (LLMs
 
 ## Installation
 
-Requires Python 3.9 or newer and git. The package is not on PyPI yet, so install it from GitHub:
+Requires Python 3.9 or newer.
 
 ```bash
-pip install "git+https://github.com/MLAI-Yonsei/maci-conformal.git"
+pip install maci-conformal
 ```
 
 To also run the CCI (conditional conformal) baseline, which needs PyTorch:
 
 ```bash
-pip install "maci-conformal[cci] @ git+https://github.com/MLAI-Yonsei/maci-conformal.git"
+pip install "maci-conformal[cci]"
 ```
 
-These install the latest `main`. To pin a release, add the tag at the end of the URL, for example `...maci-conformal.git@v0.1.0`.
+To get the latest unreleased code from `main` instead (needs git):
+
+```bash
+pip install "git+https://github.com/MLAI-Yonsei/maci-conformal.git"
+```
 
 To work on the code:
 
@@ -252,7 +256,7 @@ python -m build && twine check dist/*
 
 1. One-time setup: on PyPI, add a [trusted publisher](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) for project `maci-conformal`, repository `MLAI-Yonsei/maci-conformal`, workflow `publish.yml`, environment `pypi`. GitHub creates the `pypi` environment on the first run. You can add required reviewers to it in the repository settings.
 2. Bump `__version__` in `src/maci_conformal/__init__.py`.
-3. Create a GitHub Release with tag `v<version>`, for example `v0.2.0`. The `Publish to PyPI` workflow builds the package, checks that the tag matches the version, and uploads it.
+3. Create a GitHub Release with tag `v<version>`, for example `v0.2.1`. The `Publish to PyPI` workflow builds the package, checks that the tag matches the version, and uploads it.
 
 ## CCI Attribution
 
