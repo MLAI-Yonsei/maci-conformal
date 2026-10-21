@@ -185,5 +185,3 @@ class BasicConformal:
 
     def get_threshold(self) -> float:
         return self.threshold
-
-

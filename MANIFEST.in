@@ -1,0 +1,8 @@
+# Keep the sdist small: benchmark data is downloaded with `maci data download`,
+# and the vendored conditional-conformal copy is replaced by the PyPI package.
+prune data
+prune conditional-conformal
+prune experiments
+prune .github
+include LICENSE README.md
+recursive-include tests *.py

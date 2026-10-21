@@ -1,19 +1,22 @@
+"""Conditional Conformal Inference (CCI) baseline.
+
+Requires the optional ``cci`` extra: ``pip install "maci-conformal[cci]"``.
+"""
+
 import numpy as np
-from typing import List, Tuple, Optional, Callable
-import torch
+from typing import List, Tuple, Optional
 from scipy.optimize import linprog
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, roc_curve
-from functools import lru_cache
-import sys
-import os
 
-# Add conditional-conformal path to Python path (local vendor copy) using repo-relative path
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-vendor_path = os.path.join(repo_root, 'conditional-conformal', 'src')
-if vendor_path not in sys.path:
-    sys.path.append(vendor_path)
-from conditionalconformal import CondConf
+try:
+    import torch
+    from conditionalconformal import CondConf
+except ImportError as e:  # pragma: no cover - exercised only without the extra
+    raise ImportError(
+        "The CCI baseline needs PyTorch and conditionalconformal. "
+        'Install them with: pip install "maci-conformal[cci]"'
+    ) from e
 
 # ==============================================================================
 # === Step 1: Classes and Helper Functions for Boosting ===

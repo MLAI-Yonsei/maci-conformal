@@ -1,19 +1,19 @@
-#!/usr/bin/env python3
 """
 Flexible conditional grouping utilities for subgroup analysis.
 """
 
+import logging
 import numpy as np
 import pandas as pd
 import re
-import warnings
 import json
 import os
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 
-warnings.filterwarnings('default')
-np.seterr(all='warn')
+from .data import default_data_dir
+
+logger = logging.getLogger(__name__)
 
 
 class ConditionalGrouper(ABC):
@@ -72,15 +72,17 @@ class ConditionalGrouper(ABC):
 
 # View metadata configuration (globally overridable)
 def _default_view_csv_path() -> str:
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    return os.path.join(repo_root, 'data', 'wiki_scores', 'wikibio_final.csv')
+    return os.path.join(default_data_dir(), 'wiki_scores', 'wikibio_final.csv')
 
-GLOBAL_VIEW_METADATA_CSV = _default_view_csv_path()
+GLOBAL_VIEW_METADATA_CSV: Optional[str] = None
 
 def set_view_metadata_csv(csv_path: str):
     global GLOBAL_VIEW_METADATA_CSV
     if isinstance(csv_path, str) and len(csv_path) > 0:
         GLOBAL_VIEW_METADATA_CSV = csv_path
+
+def get_view_metadata_csv() -> str:
+    return GLOBAL_VIEW_METADATA_CSV or _default_view_csv_path()
 
 
 class ViewCountGrouper(ConditionalGrouper):
@@ -115,9 +117,10 @@ class ViewCountGrouper(ConditionalGrouper):
 
     def _ensure_loaded(self):
         # Lazy-load and refresh if global path changed
-        if (not self._loaded) or (self._csv_path != GLOBAL_VIEW_METADATA_CSV):
+        csv_path = get_view_metadata_csv()
+        if (not self._loaded) or (self._csv_path != csv_path):
             try:
-                df = pd.read_csv(GLOBAL_VIEW_METADATA_CSV)
+                df = pd.read_csv(csv_path)
                 name_col = 'Name' if 'Name' in df.columns else None
                 views_col = 'Views' if 'Views' in df.columns else None
                 maxc_col = 'max_counts' if 'max_counts' in df.columns else None
@@ -146,14 +149,15 @@ class ViewCountGrouper(ConditionalGrouper):
                         if np.isfinite(v):
                             values_for_min.append(v)
                 self._name_to_views = mapping
-                self._csv_path = GLOBAL_VIEW_METADATA_CSV
+                self._csv_path = csv_path
                 # Global minimum over available finite counts; default to 0.0 if none
                 self._global_min_count = float(np.min(values_for_min)) if len(values_for_min) > 0 else 0.0
                 self._loaded = True
-            except Exception:
+            except Exception as e:
                 # If loading fails, mark as loaded with empty mapping
+                logger.warning(f"view_count grouper: could not read {csv_path} ({e}); all samples fall into one group")
                 self._name_to_views = {}
-                self._csv_path = GLOBAL_VIEW_METADATA_CSV
+                self._csv_path = csv_path
                 self._global_min_count = 0.0
                 self._loaded = True
 
@@ -449,6 +453,22 @@ def get_available_groupers() -> Dict[str, ConditionalGrouper]:
         'medical_content': MedicalContentGrouper(),
         'false_claim_risk': FalseClaimRiskGrouper(),
     }
+
+
+# Older spellings accepted on the command line and in config files.
+GROUPER_ALIASES = {'medicalcontent': 'medical_content'}
+
+
+def canonical_grouper_name(name: str) -> str:
+    return GROUPER_ALIASES.get(name, name)
+
+
+def get_grouper(name: str) -> ConditionalGrouper:
+    groupers = get_available_groupers()
+    key = canonical_grouper_name(name)
+    if key not in groupers:
+        raise ValueError(f"Unknown grouper '{name}'. Available: {', '.join(sorted(groupers))}")
+    return groupers[key]
 
 
 def compute_conditional_coverage_by_grouper(

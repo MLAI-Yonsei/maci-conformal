@@ -1,11 +1,16 @@
-import numpy as np
 import logging
+import time
+
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 from collections import defaultdict
 from scipy.optimize import minimize
 from typing import Callable, List, Dict, Any, Optional, Tuple
 import cvxpy as cp
+
+logger = logging.getLogger(__name__)
+
 
 class MACIAdaptiveConformal:
     def __init__(
@@ -53,11 +58,11 @@ class MACIAdaptiveConformal:
         calib_samples = [entry.get('sample', entry) for entry in calib_data]
         s_values = [self._compute_nonconformity_score(s, sc) for s, sc in zip(calib_samples, per_sample_scores)]
         
-        logging.info(f"    - Calibration set size: {len(calib_data)} samples")
+        logger.info(f"    - Calibration set size: {len(calib_data)} samples")
         if not s_values:
             raise ValueError("Cannot compute scores from calibration data.")
         
-        logging.info(f"    - Nonconformity stats: min={min(s_values):.4f}, max={max(s_values):.4f}, mean={np.mean(s_values):.4f}")
+        logger.info(f"    - Nonconformity stats: min={min(s_values):.4f}, max={max(s_values):.4f}, mean={np.mean(s_values):.4f}")
         
         n = len(s_values)
         quantile_index = int(np.ceil((1.0 - alpha) * (n + 1))) - 1
@@ -66,7 +71,7 @@ class MACIAdaptiveConformal:
         sorted_s_values = np.sort(s_values)
         self.tau_hat = sorted_s_values[quantile_index]
             
-        logging.info(f"    - Assigned tau_hat: {self.tau_hat:.4f}")
+        logger.info(f"    - Assigned tau_hat: {self.tau_hat:.4f}")
         return self
 
     def predict(self, data: List[dict]) -> Tuple[List[dict], List[float]]:
@@ -152,7 +157,7 @@ class SubgroupOptimizedMACI:
                 all_scores.append([s[i] for s in scores_per_model])
 
         if len(all_labels) < 2 or len(np.unique(all_labels)) < 2:
-            logging.warning("Skipping weight optimization: insufficient or single-class labels.")
+            logger.warning("Skipping weight optimization: insufficient or single-class labels.")
             return np.ones(len(self.model_names)) / len(self.model_names)
 
         scores_matrix = np.nan_to_num(np.array(all_scores, dtype=float))
@@ -162,7 +167,7 @@ class SubgroupOptimizedMACI:
         pos = scores_matrix[labels_array == 1]
         neg = scores_matrix[labels_array == 0]
         if pos.shape[0] == 0 or neg.shape[0] == 0:
-            logging.warning("Skipping weight optimization: missing positive or negative samples.")
+            logger.warning("Skipping weight optimization: missing positive or negative samples.")
             return np.ones(len(self.model_names)) / len(self.model_names)
 
         neg_proxy = np.mean(neg, axis=1)
@@ -221,10 +226,10 @@ class SubgroupOptimizedMACI:
                 if s <= 1e-12:
                     return None
                 w_val = w_val / s
-                logging.info("    - Weight optimization completed")
+                logger.info("    - Weight optimization completed")
                 return w_val
             except Exception as e:
-                logging.debug(f"{solver_name.upper()} attempt failed (ridge={ridge}, eps_w={eps_w}): {e}")
+                logger.debug(f"{solver_name.upper()} attempt failed (ridge={ridge}, eps_w={eps_w}): {e}")
                 return None
 
         solver_order = []
@@ -241,7 +246,7 @@ class SubgroupOptimizedMACI:
                     if sol is not None:
                         return sol
 
-        logging.warning("CVXPY solvers failed repeatedly; falling back to AUC-based SLSQP optimizer as last resort.")
+        logger.warning("CVXPY solvers failed repeatedly; falling back to AUC-based SLSQP optimizer as last resort.")
         return self._learn_robust_weights(training_data)
 
     def _learn_robust_weights(self, training_data: List[Dict]) -> np.ndarray:
@@ -310,59 +315,59 @@ class SubgroupOptimizedMACI:
         """Learn subgroup-specific ensemble weights and conformal thresholds."""
         random_state = self.kwargs.get("random_state")
         grouper_name = self.grouper.__class__.__name__
-        logging.info(f"SubgroupOptimizedMACI training started (grouper: '{grouper_name}')")
+        logger.info(f"SubgroupOptimizedMACI training started (grouper: '{grouper_name}')")
         
         ensemble_train_data, calib_data = train_test_split(
             data, 
             test_size=1.0 - ensemble_train_ratio, 
             random_state=random_state
         )
-        logging.info(f"  - Data split: ensemble training {len(ensemble_train_data)} / conformal calibration {len(calib_data)}")
+        logger.info(f"  - Data split: ensemble training {len(ensemble_train_data)} / conformal calibration {len(calib_data)}")
 
-        logging.info(f"  - Learning bin edges by '{grouper_name}' values...")
+        logger.info(f"  - Learning bin edges by '{grouper_name}' values...")
         train_values = self.grouper.compute_values([d['sample'] for d in ensemble_train_data])
         finite_train_values = train_values[np.isfinite(train_values)]
         quantiles = np.linspace(0, 1, self.n_bins + 1)[1:-1]
         self.bin_edges = np.quantile(finite_train_values, quantiles) if len(finite_train_values) > 0 else np.array([])
-        logging.info(f"  - Learned bin edges: {self.bin_edges}")
+        logger.info(f"  - Learned bin edges: {self.bin_edges}")
 
         grouped_ensemble_data = self._group_data_by_bins(ensemble_train_data, self.bin_edges)
         grouped_calib_data = self._group_data_by_bins(calib_data, self.bin_edges)
 
         for label in self.bin_labels:
-            logging.info(f"--- Processing group '{label}' ---")
+            logger.info(f"--- Processing group '{label}' ---")
             sub_ensemble_data = grouped_ensemble_data.get(label, [])
             sub_calib_data = grouped_calib_data.get(label, [])
             
             if not sub_ensemble_data or not sub_calib_data:
-                logging.warning(f"Skipping group '{label}' due to insufficient data.")
+                logger.warning(f"Skipping group '{label}' due to insufficient data.")
                 continue
                 
-            logging.info(f"  - Learning ensemble weights (n={len(sub_ensemble_data)})...")
-            _t0 = __import__('time').perf_counter()
+            logger.info(f"  - Learning ensemble weights (n={len(sub_ensemble_data)})...")
+            _t0 = time.perf_counter()
             self.weights[label] = self._learn_robust_weights_by_retention(sub_ensemble_data, target_tpr=target_tpr)
-            self._timing['weight_optimization_s'] += __import__('time').perf_counter() - _t0
+            self._timing['weight_optimization_s'] += time.perf_counter() - _t0
             
-            logging.info(f"  - Calibrating threshold (n={len(sub_calib_data)})...")
+            logger.info(f"  - Calibrating threshold (n={len(sub_calib_data)})...")
             score_func = lambda data, l=label: self._compute_ensemble_scores(data, l)
             
             conformal_model = MACIAdaptiveConformal(score_function=score_func, **self.kwargs)
-            _t1 = __import__('time').perf_counter()
+            _t1 = time.perf_counter()
             conformal_model.fit_on_calib(sub_calib_data, alpha)
-            self._timing['calibration_s'] += __import__('time').perf_counter() - _t1
+            self._timing['calibration_s'] += time.perf_counter() - _t1
             self.conformal_models[label] = conformal_model
 
-        logging.info("--- Training fallback model on all data ---")
+        logger.info("--- Training fallback model on all data ---")
         self.fallback_weights = self._learn_robust_weights_by_retention(ensemble_train_data, target_tpr=target_tpr)
         
-        logging.info("✅ Training complete.")
+        logger.info("✅ Training complete.")
         return self
 
     def get_timing(self) -> Dict[str, float]:
         return dict(self._timing)
 
     def predict(self, data: List[dict]) -> Tuple[List[dict], List[float]]:
-        if not self.conformal_models: raise ValueError("모델이 학습되지 않았습니다.")
+        if not self.conformal_models: raise ValueError("Model is not fitted. Call fit() first.")
         
         grouped_data_with_indices = defaultdict(list)
         values = self.grouper.compute_values([d['sample'] for d in data])
@@ -380,7 +385,7 @@ class SubgroupOptimizedMACI:
             model = self.conformal_models.get(label)
             
             if model:
-                logging.info(f"  - Predicting for group '{label}' (n={len(subgroup_data)})...")
+                logger.info(f"  - Predicting for group '{label}' (n={len(subgroup_data)})...")
                 predicted_samples, rates = model.predict(subgroup_data)
 
                 for i, original_item, predicted_sample, rate in zip(original_indices, subgroup_data, predicted_samples, rates):
@@ -389,7 +394,7 @@ class SubgroupOptimizedMACI:
                     results_placeholder[i] = new_result_item
                     rates_placeholder[i] = rate
             else:
-                logging.warning(f"No trained model for group '{label}'. Using fallback weights for prediction.")
+                logger.warning(f"No trained model for group '{label}'. Using fallback weights for prediction.")
                 fallback_score_func = lambda data_list: self._compute_ensemble_scores(data_list, label)
                 fallback_model = MACIAdaptiveConformal(score_function=fallback_score_func, **self.kwargs)
                 fallback_model.tau_hat = 0.0 
