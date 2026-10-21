@@ -10,3 +10,4 @@ conditionalconformal==0.0.5
 torch==2.8.0
 torchvision==0.23.0
 torchaudio==2.8.0
+tomli==2.0.1; python_version < '3.11'

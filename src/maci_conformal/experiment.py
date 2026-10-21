@@ -6,6 +6,7 @@ import os
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -13,24 +14,68 @@ import numpy as np
 
 from .adaptive import MACIAdaptiveConformal, SubgroupOptimizedMACI
 from .basic import BasicConformal
-from .config import Config
+from . import __version__
+from .config import Config, dump_config
 from .data import DEFAULT_MODEL_NAMES, default_data_dir, load_dataset
 from .groupers import get_grouper, set_view_metadata_csv
 from .metrics import compute_conditional_coverage, compute_marginal_coverage, evaluate_retention
+from .report import prediction_row, render_html, write_jsonl
 
 logger = logging.getLogger(__name__)
 
 _PACKAGE_LOGGER = logging.getLogger('maci_conformal')
 
 
-@contextmanager
-def log_to(log_dir: str, console: bool = True):
-    """Send package logs to a timestamped file in ``log_dir`` (and the console) for the duration."""
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_filename = os.path.join(log_dir, f"experiment_log_{timestamp}.log")
+@dataclass
+class OutputPaths:
+    """Where one `maci run` writes its files.
 
-    handlers: List[logging.Handler] = [logging.FileHandler(log_filename)]
+    By default every run gets its own folder ``<output_dir>/<timestamp>/``. If
+    ``log_dir`` or ``results_dir`` is set, the flat layout of the original
+    scripts is used instead (timestamped file names in shared folders).
+    """
+    log_file: str
+    results_dir: str
+    timestamp: str
+    run_dir: Optional[str] = None
+
+    _NAMES = {'results': 'results.json', 'predictions': 'predictions.jsonl', 'report': 'report.html',
+              'config': 'config.toml'}
+
+    def path(self, kind: str, stem: str) -> str:
+        if self.run_dir:
+            return os.path.join(self.run_dir, self._NAMES[kind])
+        ext = self._NAMES[kind].rsplit('.', 1)[1]
+        return os.path.join(self.results_dir, f"{kind}_{stem}.{ext}")
+
+
+def prepare_output(cfg: Config) -> OutputPaths:
+    now = datetime.now()
+    out = cfg.output
+    timestamp = now.strftime("%Y%m%d-%H%M%S")
+    if out.log_dir or out.results_dir:
+        # Create both folders now so that a bad path fails before the experiment runs.
+        os.makedirs(out.resolved_log_dir, exist_ok=True)
+        os.makedirs(out.resolved_results_dir, exist_ok=True)
+        log_file = os.path.join(out.resolved_log_dir, f"experiment_log_{now:%Y-%m-%d_%H-%M-%S}.log")
+        return OutputPaths(log_file=log_file, results_dir=out.resolved_results_dir, timestamp=timestamp)
+    base = os.path.join(out.output_dir, timestamp)
+    run_dir, n = base, 1
+    while os.path.exists(run_dir):
+        n += 1
+        run_dir = f"{base}-{n}"
+    os.makedirs(run_dir, exist_ok=False)
+    return OutputPaths(log_file=os.path.join(run_dir, 'log.txt'), results_dir=run_dir, timestamp=timestamp,
+                       run_dir=run_dir)
+
+
+@contextmanager
+def log_to(log_file: str, console: bool = True):
+    """Send package logs to ``log_file`` (and the console) for the duration."""
+    os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+    log_filename = log_file
+
+    handlers: List[logging.Handler] = [logging.FileHandler(log_filename, encoding='utf-8')]
     if console:
         handlers.append(logging.StreamHandler())
     for handler in handlers:
@@ -303,15 +348,8 @@ def _serializable_results(results: Dict) -> Dict[str, Dict[str, Any]]:
     return serializable_data
 
 
-def save_aggregated_results_to_json(results: Dict, cfg: Config, dataset_type: str) -> Optional[str]:
-    output_dir = cfg.output.resolved_results_dir
-    os.makedirs(output_dir, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    groups_str = "_".join(sorted(cfg.experiment.conditional_groups))
-    filename = f"results_{dataset_type}_{_model_set_label(cfg.maci.models)}_{groups_str}_{timestamp}.json"
-    filepath = os.path.join(output_dir, filename)
-
+def save_aggregated_results_to_json(results: Dict, filepath: str) -> Optional[str]:
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     logger.info(f"\n💾 Saving aggregated results to {filepath}...")
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -401,22 +439,50 @@ def _log_aggregated(all_runs_results: Dict, alpha: float) -> None:
     logger.info("\n" + "=" * 100)
 
 
-def run_experiments(cfg: Config) -> Dict[str, Any]:
+def _collect_rows(rows: List[Dict], test_data: List[Dict], filtered: List[Dict], model_names: List[str],
+                  groups: Optional[List[Any]] = None, **fields: Any) -> None:
+    for i, (entry, sample) in enumerate(zip(test_data, filtered)):
+        if sample is None:
+            continue
+        rows.append(prediction_row(sample, entry.get('scores'), model_names,
+                                   group=None if groups is None else groups[i], **fields))
+
+
+def run_experiments(cfg: Config, paths: Optional[OutputPaths] = None) -> Dict[str, Any]:
     """Run every configured method for ``cfg.experiment.n_runs`` random splits.
 
-    Returns ``{'results': <JSON-ready aggregate>, 'results_path': <saved file or None>,
-    'dataset_type': <str>}``. Progress is logged to the ``maci_conformal`` logger;
-    wrap the call in :func:`log_to` to also write a log file.
+    Returns ``{'results': <JSON-ready aggregate>, 'results_path', 'predictions_path',
+    'report_path', 'run_dir', 'dataset_type'}``. Progress is logged to the
+    ``maci_conformal`` logger; wrap the call in :func:`log_to` to also write a log file.
     """
     cfg.validate()
     e = cfg.experiment
     data_dir = cfg.data.data_dir or default_data_dir()
-    set_view_metadata_csv(cfg.data.view_metadata_csv or os.path.join(data_dir, 'wiki_scores', 'wikibio_final.csv'))
+    view_csv = cfg.data.view_metadata_csv or os.path.join(data_dir, 'wiki_scores', 'wikibio_final.csv')
+    if 'view_count' in e.conditional_groups and not os.path.exists(view_csv):
+        if cfg.data.view_metadata_csv:
+            raise FileNotFoundError(f"View-count CSV not found: {view_csv}")
+        logger.warning(f"⚠️ {view_csv} not found; the view_count grouper will put every answer in one group.")
+    set_view_metadata_csv(view_csv)
+
+    methods = list(e.methods)
+    if 'CCI' in methods:
+        try:
+            from . import conditional  # noqa: F401
+        except ImportError as exc:
+            if methods == ['CCI']:
+                raise ValueError(f"CCI was the only method requested, but it is unavailable: {exc}") from None
+            methods.remove('CCI')
+            logger.warning(f"⚠️ Skipping CCI: {exc}")
+
+    paths = paths or prepare_output(cfg)
+    want_rows = cfg.output.save_predictions or cfg.output.report
+    prediction_rows: List[Dict[str, Any]] = []
 
     logger.info("=" * 80)
     logger.info(f"📊 Setup: {e.calib_ratio*100:.0f}% calibration + {e.test_ratio*100:.0f}% test, α={e.alpha}, adaptive={cfg.cci.adaptive_alpha}")
     logger.info(f"🔄 Number of runs: {e.n_runs}")
-    logger.info(f"🧪 Methods: {', '.join(e.methods)}")
+    logger.info(f"🧪 Methods: {', '.join(methods)}")
     logger.info(f"🏷️  BCI Score: {cfg.bci.score_type}")
     logger.info(f"📊 Conditional groups: {e.conditional_groups}")
     logger.info(f"🔧 Binning Method: {e.binning_method}")
@@ -446,14 +512,19 @@ def run_experiments(cfg: Config) -> Dict[str, Any]:
 
         results = {}
 
-        if 'BCI' in e.methods:
+        row_fields = dict(run=run_idx + 1, seed=random_seed)
+
+        if 'BCI' in methods:
             try:
                 results['BCI'] = run_bci_experiment(calib_data, test_data, score_type=cfg.bci.score_type, alpha=e.alpha)
+                if want_rows:
+                    _collect_rows(prediction_rows, test_data, results['BCI']['filtered_results'], model_names_to_use,
+                                  method='BCI', score_type=cfg.bci.score_type, **row_fields)
             except Exception:
                 logger.exception("❌ BCI failed")
                 results['BCI'] = None
 
-        if 'CCI' in e.methods:
+        if 'CCI' in methods:
             try:
                 results['CCI'] = run_cci_experiment(
                     calib_data, test_data,
@@ -464,11 +535,14 @@ def run_experiments(cfg: Config) -> Dict[str, Any]:
                     adaptive_alpha=cfg.cci.adaptive_alpha,
                     retention_target=cfg.cci.retention_target
                 )
+                if want_rows:
+                    _collect_rows(prediction_rows, test_data, results['CCI']['filtered_results'], model_names_to_use,
+                                  method='CCI', **row_fields)
             except Exception:
                 logger.exception("❌ CCI failed")
                 results['CCI'] = None
 
-        if 'MACI' in e.methods:
+        if 'MACI' in methods:
             results['MACI'] = {
                 'coverage': [],
                 'retention_rate': [],
@@ -494,6 +568,13 @@ def run_experiments(cfg: Config) -> Dict[str, Any]:
                         random_state=random_seed,
                         target_tpr=cfg.maci.target_tpr
                     )
+
+                    if want_rows:
+                        _collect_rows(prediction_rows, test_data,
+                                      [res.get('sample') for res in maci_subgroup_result['filtered_results']],
+                                      model_names_to_use,
+                                      groups=[res.get('group') for res in maci_subgroup_result['filtered_results']],
+                                      method='MACI', grouper=subgroup_name, **row_fields)
 
                     if maci_subgroup_result and 'filtered_results' in maci_subgroup_result:
                         flat_filtered_results = []
@@ -577,18 +658,50 @@ def run_experiments(cfg: Config) -> Dict[str, Any]:
                 'CCI': (results.get('CCI') or {}).get('timing', {}),
                 'MACI': (results.get('MACI') or {}).get('timing') or {},
             }
-            timing_dir = cfg.output.resolved_results_dir
-            os.makedirs(timing_dir, exist_ok=True)
-            tstamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-            timing_path = os.path.join(timing_dir, f"time_profile_{dataset_type}_{timing_payload['model_set']}_{tstamp}.json")
+            if paths.run_dir:
+                timing_path = os.path.join(paths.run_dir, f"time_profile_run{run_idx + 1}.json")
+            else:
+                os.makedirs(paths.results_dir, exist_ok=True)
+                tstamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+                timing_path = os.path.join(paths.results_dir, f"time_profile_{dataset_type}_{timing_payload['model_set']}_"
+                                                              f"{tstamp}_run{run_idx + 1}.json")
             with open(timing_path, 'w', encoding='utf-8') as f:
                 json.dump(timing_payload, f, indent=2, ensure_ascii=False)
             logger.info(f"⏱️ Saved timing profile to {timing_path}")
 
     _log_aggregated(all_runs_results, e.alpha)
-    results_path = save_aggregated_results_to_json(all_runs_results, cfg, dataset_type)
+    groups_str = "_".join(sorted(e.conditional_groups))
+    stem = f"{dataset_type}_{_model_set_label(cfg.maci.models)}_{groups_str}_{paths.timestamp}"
+    results_path = save_aggregated_results_to_json(all_runs_results, paths.path('results', stem))
+    serializable = _serializable_results(all_runs_results)
+
+    config_path = paths.path('config', stem)
+    with open(config_path, 'w', encoding='utf-8') as f:
+        f.write(dump_config(cfg))
+
+    predictions_path = report_path = None
+    if cfg.output.save_predictions:
+        predictions_path = paths.path('predictions', stem)
+        write_jsonl(predictions_path, prediction_rows)
+        logger.info(f"🧾 Per-claim predictions: {predictions_path}")
+    if cfg.output.report:
+        report_path = paths.path('report', stem)
+        meta = {'dataset': dataset_type, 'alpha': e.alpha, 'runs': e.n_runs, 'methods': ', '.join(methods),
+                'models': ', '.join(model_names_to_use), 'created': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                'maci-conformal': __version__}
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(render_html(meta, serializable, prediction_rows, max_samples=cfg.output.report_samples))
+        logger.info(f"📄 HTML report: {report_path}")
+    failed = [m for m in methods if not serializable.get(m, {}).get('coverage')]
+    if failed:
+        logger.warning(f"⚠️ No successful runs for: {', '.join(failed)} (see the log above).")
     return {
-        'results': _serializable_results(all_runs_results),
+        'results': serializable,
+        'failed_methods': failed,
         'results_path': results_path,
+        'predictions_path': predictions_path,
+        'report_path': report_path,
+        'config_path': config_path,
+        'run_dir': paths.run_dir,
         'dataset_type': dataset_type,
     }

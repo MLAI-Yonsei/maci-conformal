@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 
@@ -86,11 +87,15 @@ class MACIAdaptiveConformal:
             new_sample = dict(sample)
             if not atomic_facts or s_raw.size == 0:
                 new_sample["filtered_claims"] = []
+                new_sample["claim_scores"] = []
+                new_sample["kept_mask"] = [False] * len(atomic_facts)
                 retention_rates.append(1.0 if not atomic_facts else 0.0)
             else:
                 s_tmp = np.asarray(s_raw, dtype=float)
                 s_tmp = np.nan_to_num(s_tmp, nan=0.0, posinf=1.0, neginf=0.0)
                 s = np.clip(s_tmp, 0.0, 1.0 - self.eps)
+                # Python's sort is stable, so this is the same order as indexed_items below.
+                order = sorted(range(len(s)), key=lambda i: s[i])
                 indexed_items = sorted(list(zip(s, atomic_facts)), key=lambda x: x[0])
                 s_sorted_asc = np.array([item[0] for item in indexed_items])
                 costs = -np.log(1.0 - s_sorted_asc)
@@ -108,6 +113,10 @@ class MACIAdaptiveConformal:
                         if self._rng.uniform(0.0, 1.0) < p:
                             K = K + 1
                 new_sample["filtered_claims"] = [item[1] for item in indexed_items[K:]]
+                kept = set(order[K:])
+                # Claims without a score (a scorer returned fewer scores) are never kept.
+                new_sample["claim_scores"] = [float(v) for v in s] + [None] * (len(atomic_facts) - len(s))
+                new_sample["kept_mask"] = [i in kept for i in range(len(atomic_facts))]
                 retention_rates.append(len(new_sample["filtered_claims"]) / len(atomic_facts))
             filtered_data.append(new_sample)
         return filtered_data, retention_rates
@@ -311,8 +320,9 @@ class SubgroupOptimizedMACI:
                 final_scores.append(scores_matrix @ subgroup_weights)
         return final_scores
 
-    def fit(self, data: List[dict], alpha: float = 0.1, ensemble_train_ratio: float = 0.5, target_tpr: float = 0.95):
+    def fit(self, data: List[dict], alpha: float = 0.1, ensemble_train_ratio: float = 0.5, target_tpr: float = 0.8):
         """Learn subgroup-specific ensemble weights and conformal thresholds."""
+        self.alpha = alpha
         random_state = self.kwargs.get("random_state")
         grouper_name = self.grouper.__class__.__name__
         logger.info(f"SubgroupOptimizedMACI training started (grouper: '{grouper_name}')")
@@ -391,18 +401,82 @@ class SubgroupOptimizedMACI:
                 for i, original_item, predicted_sample, rate in zip(original_indices, subgroup_data, predicted_samples, rates):
                     new_result_item = original_item.copy()
                     new_result_item['sample'] = predicted_sample
+                    new_result_item['group'] = label
+                    new_result_item['budget'] = float(model.tau_hat)
                     results_placeholder[i] = new_result_item
                     rates_placeholder[i] = rate
             else:
-                logger.warning(f"No trained model for group '{label}'. Using fallback weights for prediction.")
+                # No calibrated threshold for this group, so there is no guarantee to give: abstain by
+                # removing every claim. (A budget of 0 would remove nothing, i.e. keep every claim.)
+                logger.warning(f"No calibrated model for group '{label}' ({len(subgroup_data)} answers); "
+                               "removing all of their claims.")
                 fallback_score_func = lambda data_list: self._compute_ensemble_scores(data_list, label)
                 fallback_model = MACIAdaptiveConformal(score_function=fallback_score_func, **self.kwargs)
-                fallback_model.tau_hat = 0.0 
+                fallback_model.tau_hat = np.inf
                 predicted_samples, rates = fallback_model.predict(subgroup_data)
                 for i, original_item, predicted_sample, rate in zip(original_indices, subgroup_data, predicted_samples, rates):
                     new_result_item = original_item.copy()
                     new_result_item['sample'] = predicted_sample
+                    new_result_item['group'] = label
+                    new_result_item['budget'] = None
+                    new_result_item['uncalibrated_group'] = True
                     results_placeholder[i] = new_result_item
                     rates_placeholder[i] = rate
 
         return results_placeholder, rates_placeholder
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def to_dict(self) -> Dict[str, Any]:
+        """Everything needed to rebuild the fitted filter, as JSON-ready values."""
+        if not self.conformal_models:
+            raise ValueError("Model is not fitted. Call fit() first.")
+        return {
+            'model_names': list(self.model_names),
+            'grouper': getattr(self.grouper, 'name', self.grouper.__class__.__name__),
+            'n_bins': self.n_bins,
+            'kwargs': dict(self.kwargs),
+            'alpha': getattr(self, 'alpha', None),
+            'bin_edges': np.asarray(self.bin_edges, dtype=float).tolist(),
+            'bin_labels': list(self.bin_labels),
+            'weights': {k: np.asarray(v, dtype=float).tolist() for k, v in self.weights.items()},
+            'fallback_weights': None if self.fallback_weights is None else np.asarray(self.fallback_weights, dtype=float).tolist(),
+            'budgets': {k: float(m.tau_hat) for k, m in self.conformal_models.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, state: Dict[str, Any], grouper: Any = None) -> "SubgroupOptimizedMACI":
+        """Rebuild a fitted filter. Built-in groupers are restored by name; pass ``grouper`` for a custom one."""
+        if grouper is None:
+            from .groupers import get_grouper
+            grouper = get_grouper(state['grouper'])
+        model = cls(model_names=state['model_names'], grouper=grouper, n_bins=state['n_bins'], **state.get('kwargs', {}))
+        model.alpha = state.get('alpha')
+        model.bin_edges = np.asarray(state['bin_edges'], dtype=float)
+        model.bin_labels = list(state['bin_labels'])
+        model.weights = {k: np.asarray(v, dtype=float) for k, v in state['weights'].items()}
+        fb = state.get('fallback_weights')
+        model.fallback_weights = None if fb is None else np.asarray(fb, dtype=float)
+        for label, tau in state['budgets'].items():
+            cm = MACIAdaptiveConformal(score_function=lambda data, l=label: model._compute_ensemble_scores(data, l),
+                                       **model.kwargs)
+            cm.tau_hat = float(tau)
+            model.conformal_models[label] = cm
+        return model
+
+    def save(self, path: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Write the fitted filter (plus optional metadata) to a JSON file."""
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'format': 'maci-calibrator/1', 'metadata': metadata or {}, 'model': self.to_dict()},
+                      f, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def load(cls, path: str, grouper: Any = None) -> "SubgroupOptimizedMACI":
+        with open(path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        if payload.get('format') != 'maci-calibrator/1':
+            raise ValueError(f"{path} is not a MACI calibrator file")
+        model = cls.from_dict(payload['model'], grouper=grouper)
+        model.metadata = payload.get('metadata', {})
+        return model

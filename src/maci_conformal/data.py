@@ -14,14 +14,22 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_NAMES = ['qwen-2.5-72b-instruct', 'deepseek-chat-v3-0324', 'llama-3.3-70b-instruct']
+# The three LLM scorers of the paper, by OpenRouter id. Their precomputed scores ship with the benchmark data.
+DEFAULT_MODEL_NAMES = ['qwen/qwen-2.5-72b-instruct', 'deepseek/deepseek-chat-v3-0324', 'meta-llama/llama-3.3-70b-instruct']
 
-# Score files are matched by filename tokens; the first token list that matches wins.
-# Models not listed here are matched by their lower-cased name.
+# Names used by the original scripts; still accepted.
+_LEGACY_MODEL_NAMES = {
+    'qwen-2.5-72b-instruct': 'qwen/qwen-2.5-72b-instruct',
+    'deepseek-chat-v3-0324': 'deepseek/deepseek-chat-v3-0324',
+    'llama-3.3-70b-instruct': 'meta-llama/llama-3.3-70b-instruct',
+}
+
+# The shipped score files do not all follow the `<prefix>_<model id>` naming, so the
+# paper's models are also matched by these filename tokens.
 _MODEL_FILE_TOKENS = {
-    'qwen-2.5-72b-instruct': [['qwen-2.5-72b', 'instruct'], ['qwen', 'instruct'], ['qwen']],
-    'deepseek-chat-v3-0324': [['deepseek', 'chat', 'v3'], ['deepseek', 'chat'], ['deepseek']],
-    'llama-3.3-70b-instruct': [['llama-3.3-70b', 'instruct'], ['llama-3.3', 'instruct'], ['llama']],
+    'qwen-2.5-72b-instruct': ['qwen-2.5-72b', 'instruct'],
+    'deepseek-chat-v3-0324': ['deepseek', 'chat', 'v3'],
+    'llama-3.3-70b-instruct': ['llama-3.3-70b', 'instruct'],
 }
 
 # Data files are fetched from a fixed commit of the GitHub repository, so every
@@ -130,12 +138,24 @@ def download_data(
     return data_dir
 
 
-def _find_score_file(npz_files: List[str], model_name: str) -> Optional[str]:
-    token_options = _MODEL_FILE_TOKENS.get(model_name, [[model_name.lower()]])
-    for tokens in token_options:
+def canonical_model_name(name: str) -> str:
+    return _LEGACY_MODEL_NAMES.get(name, name)
+
+
+def score_file_name(score_prefix: str, model_name: str) -> str:
+    """'wikibio_scores' + 'meta-llama/llama-3.3-70b-instruct' -> 'wikibio_scores_meta-llama_llama-3.3-70b-instruct.npz'."""
+    return f"{score_prefix}_{model_name.replace('/', '_').replace(':', '_')}.npz"
+
+
+def _find_score_file(npz_files: List[str], model_name: str, score_prefix: str) -> Optional[str]:
+    exact = score_file_name(score_prefix, model_name).lower()
+    for fp in npz_files:
+        if os.path.basename(fp).lower() == exact:
+            return fp
+    legacy = {v: k for k, v in _LEGACY_MODEL_NAMES.items()}.get(model_name)
+    if legacy:
         for fp in npz_files:
-            name = os.path.basename(fp).lower()
-            if all(t in name for t in tokens):
+            if all(t in os.path.basename(fp).lower() for t in _MODEL_FILE_TOKENS[legacy]):
                 return fp
     return None
 
@@ -221,15 +241,25 @@ def load_dataset(
         except FileNotFoundError:
             logger.warning(f"  ⚠️ {score_type} not found: {score_path}")
 
-    if scores_dir is not None and os.path.isdir(scores_dir):
-        score_files_dir = scores_dir
-    else:
-        score_files_dir = base_scores_dir
+    # Score files are looked up in scores_dir first, then next to the dataset.
+    search_dirs = [base_scores_dir]
+    if scores_dir is not None:
+        if not os.path.isdir(scores_dir):
+            raise FileNotFoundError(f"Scores folder not found: {scores_dir}")
+        search_dirs.insert(0, os.path.abspath(scores_dir))
+    search_dirs = list(dict.fromkeys(search_dirs))
 
-    logger.info(f"  🎯 Score files directory: {score_files_dir}")
+    logger.info(f"  🎯 Score files directory: {', '.join(search_dirs)}")
 
-    all_npz_files = sorted(glob.glob(os.path.join(score_files_dir, f"{score_prefix}_*.npz")))
-    score_files = {m: _find_score_file(all_npz_files, m) for m in model_names}
+    all_npz_files = [fp for d in search_dirs for fp in sorted(glob.glob(os.path.join(d, f"{score_prefix}_*.npz")))]
+    model_names = [canonical_model_name(m) for m in model_names]
+    score_files = {m: _find_score_file(all_npz_files, m, score_prefix) for m in model_names}
+    missing_files = [m for m, f in score_files.items() if f is None]
+    if missing_files:
+        raise FileNotFoundError(
+            "No score file for model(s) " + ', '.join(missing_files) + f" in {', '.join(search_dirs)} "
+            f"(expected e.g. {score_file_name(score_prefix, missing_files[0])}). "
+            f"Create them with `maci score --models {' '.join(missing_files)}` and pass --scores-dir.")
 
     llm_scores = {}
     for model_name, filename in score_files.items():
@@ -381,6 +411,12 @@ def load_dataset(
             'features_4d': features_4d,
             'prompt_features': np.array([1.0, len(sample.get('response', '')), len(prompt)])
         })
+
+    for model_name, model_data in llm_scores.items():
+        missing = sum(1 for d in aligned_data if d['sample']['prompt'] not in model_data)
+        if missing:
+            logger.warning(f"  ⚠️ {model_name}: {missing} of {len(aligned_data)} samples have no scores and use 0.5. "
+                           f"Score them with `maci score --models {model_name} --limit {limit_samples}`.")
 
     logger.info(f"✅ Loaded {len(aligned_data)} valid samples")
     return aligned_data, dataset_type

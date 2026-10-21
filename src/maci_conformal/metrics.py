@@ -60,12 +60,17 @@ def compute_marginal_coverage(filtered_dataset: List[Dict]):
 
 
 def compute_conditional_coverage(test_data, filtered_results, grouper, alpha=0.1, binning_method='quartiles'):
-    """Compute conditional coverage for subgroups"""
+    """Coverage and retention within tertiles of ``grouper``'s value.
+
+    ``filtered_results`` may be flat samples or ``{'sample': ...}`` items as returned by ``predict``.
+    ``binning_method`` is accepted for compatibility; tertiles are always used.
+    """
+    filtered_results = [item.get('sample', item) for item in filtered_results]
 
     combined_data = []
     for orig_sample, filtered_sample in zip(test_data, filtered_results):
         combined_sample = dict(orig_sample['sample'])
-        combined_sample['scores'] = orig_sample['scores']
+        combined_sample['scores'] = orig_sample.get('scores', {})
         combined_sample['filtered_claims'] = filtered_sample.get('filtered_claims', [])
         combined_data.append(combined_sample)
 

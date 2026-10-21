@@ -344,8 +344,12 @@ class ConditionalConformalInference:
                 else:
                     thr = float(np.clip(thr, s_min, s_max))
                 sample['filtered_claims'] = [c for j, c in enumerate(claims) if scores[j] <= thr]
+                sample['kept_mask'] = [bool(scores[j] <= thr) for j in range(len(claims))]
+                # Reported with the sign flipped so that, as for MACI and BCI, higher means kept.
+                sample['claim_scores'] = [float(-v) for v in scores]
             except Exception:
                 sample['filtered_claims'] = []
+                sample['kept_mask'] = [False] * len(claims)
 
             out.append(sample)
 

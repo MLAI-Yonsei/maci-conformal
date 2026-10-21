@@ -7,11 +7,15 @@ Quick start::
     maci = SubgroupOptimizedMACI(model_names=["model_a", "model_b"], grouper=FalseClaimRiskGrouper())
     maci.fit(calib_entries, alpha=0.1)
     filtered, retention = maci.predict(new_entries)
+    maci.save("maci_calibrator.json")
+
+With OpenRouter models, :mod:`maci_conformal.pipeline` scores claims, calibrates and
+checks new answers (the ``maci calibrate`` / ``maci check`` commands).
 
 The CCI baseline lives in :mod:`maci_conformal.conditional` and needs the ``cci`` extra.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .adaptive import MACIAdaptiveConformal, SubgroupOptimizedMACI
 from .basic import BasicConformal
@@ -20,7 +24,9 @@ from .data import DEFAULT_MODEL_NAMES, default_data_dir, download_data, load_dat
 from .experiment import run_experiments
 from .groupers import (ConditionalGrouper, FalseClaimRiskGrouper, MedicalContentGrouper, ViewCountGrouper,
                        get_available_groupers, get_grouper)
+from .llm import LLMClient, LLMError, extract_claims, score_claims
 from .metrics import compute_conditional_coverage, compute_marginal_coverage, evaluate_retention
+from .pipeline import calibrate, check_answers, score_entries
 
 __all__ = [
     "__version__",
@@ -43,4 +49,11 @@ __all__ = [
     "download_data",
     "default_data_dir",
     "DEFAULT_MODEL_NAMES",
+    "LLMClient",
+    "LLMError",
+    "extract_claims",
+    "score_claims",
+    "score_entries",
+    "calibrate",
+    "check_answers",
 ]

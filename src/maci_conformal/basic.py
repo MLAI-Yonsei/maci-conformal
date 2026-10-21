@@ -116,14 +116,19 @@ class BasicConformal:
         for sample, scores_i in zip(data, per_sample_scores):
             if 'atomic_facts' in sample and len(sample['atomic_facts']) > 0:
                 filtered_claims = []
-                for claim, s in zip(sample['atomic_facts'], scores_i):
+                kept_mask = [False] * len(sample['atomic_facts'])
+                for j, (claim, s) in enumerate(zip(sample['atomic_facts'], scores_i)):
                     if s > self.threshold:
                         filtered_claims.append(claim)
+                        kept_mask[j] = True
                     elif np.isclose(s, self.threshold):
                         if self._rng.uniform() < self._tie_gamma_keep:
                             filtered_claims.append(claim)
+                            kept_mask[j] = True
                 sample = dict(sample)
                 sample['filtered_claims'] = filtered_claims
+                sample['kept_mask'] = kept_mask
+                sample['claim_scores'] = [float(s) if np.isfinite(s) else None for s in scores_i]
                 retention_rate = len(filtered_claims) / len(sample['atomic_facts'])
             elif 'atomic_facts' in sample and len(sample['atomic_facts']) == 0:
                 sample = dict(sample)

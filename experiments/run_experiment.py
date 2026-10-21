@@ -12,10 +12,10 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'src'))
 from maci_conformal.cli import main  # noqa: E402
 
 if __name__ == "__main__":
-    defaults = [
-        '--data-dir', os.path.join(REPO_ROOT, 'data'),
-        '--log-dir', os.path.join(REPO_ROOT, 'logs'),
-        '--results-dir', os.path.join(REPO_ROOT, 'analysis', 'experiment_results'),
-    ]
-    # Flags given on the command line come later and therefore win.
-    sys.exit(main(['run', *defaults, *sys.argv[1:]]))
+    # Used only for settings that neither a config file nor a flag provides.
+    repo_defaults = {
+        ('data', 'data_dir'): os.path.join(REPO_ROOT, 'data'),
+        ('output', 'log_dir'): os.path.join(REPO_ROOT, 'logs'),
+        ('output', 'results_dir'): os.path.join(REPO_ROOT, 'analysis', 'experiment_results'),
+    }
+    sys.exit(main(['run', *sys.argv[1:]], run_defaults=repo_defaults))
